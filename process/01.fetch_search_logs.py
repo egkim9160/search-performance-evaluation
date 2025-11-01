@@ -14,6 +14,7 @@ from mysql.connector.connection import MySQLConnection
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import matplotlib
+from datetime import datetime, timedelta
 matplotlib.rcParams['font.family'] = 'NanumGothic'  # For Korean text
 matplotlib.rcParams['axes.unicode_minus'] = False
 
@@ -41,15 +42,17 @@ def _load_env_from_project_root() -> None:
 _load_env_from_project_root()
 
 
-# Search log query
-SEARCH_LOG_QUERY = """
+# Search log query template
+SEARCH_LOG_QUERY_TEMPLATE = """
 SELECT
   WORD,
   COUNT(*) AS cnt
 FROM medigate.SE_LOG
 WHERE SUB_CATEGORY_CODE = 'MUZZIMA'
-  AND LOG_DATE > '2024-01-01'
+  AND LOG_DATE > '{start_date}'
+  AND LOG_DATE <= '{end_date}'
 GROUP BY WORD
+HAVING COUNT(*) > 1
 ORDER BY cnt DESC
 """
 
@@ -152,7 +155,17 @@ def main():
     """Main execution function"""
     import argparse
 
+    # Calculate default start date (6 months before end date)
+    default_end_date = "2025-10-30"
+    end_dt = datetime.strptime(default_end_date, "%Y-%m-%d")
+    start_dt = end_dt - timedelta(days=180)  # 6 months
+    default_start_date = start_dt.strftime("%Y-%m-%d")
+
     parser = argparse.ArgumentParser(description="Fetch search log data from MySQL")
+    parser.add_argument("--start_date", type=str, default=default_start_date,
+                       help=f"Start date in YYYY-MM-DD format (default: {default_start_date})")
+    parser.add_argument("--end_date", type=str, default=default_end_date,
+                       help=f"End date in YYYY-MM-DD format (default: {default_end_date})")
     parser.add_argument("--out_dir", type=str, default="data/raw",
                        help="Output directory (default: data/raw)")
     parser.add_argument("--output_file", type=str, default="search_logs.csv",
@@ -164,6 +177,14 @@ def main():
     parser.add_argument("--no_plot", action="store_true",
                        help="Skip plotting")
     args = parser.parse_args()
+
+    # Validate date format
+    try:
+        datetime.strptime(args.start_date, "%Y-%m-%d")
+        datetime.strptime(args.end_date, "%Y-%m-%d")
+    except ValueError:
+        print("Error: Dates must be in YYYY-MM-DD format")
+        sys.exit(1)
 
     print("=" * 60)
     print("Search Log Data Extraction")
@@ -180,9 +201,30 @@ def main():
 
     # 2. Execute query
     print("\n[2] Executing search log query...")
-    print(f"Query: Fetch MUZZIMA search logs after 2024-01-01")
+    print(f"Query: Fetch MUZZIMA search logs from {args.start_date} to {args.end_date}")
+
+    # Build query with date parameters
+    query = SEARCH_LOG_QUERY_TEMPLATE.format(
+        start_date=args.start_date,
+        end_date=args.end_date
+    )
+
     try:
-        df = fetch_dataframe(conn, SEARCH_LOG_QUERY)
+        df = fetch_dataframe(conn, query)
+
+        # Clean WORD column
+        if not df.empty and 'WORD' in df.columns:
+            # Strip whitespace
+            df['WORD'] = df['WORD'].str.strip()
+            # Remove leading/trailing quotes (single or double)
+            df['WORD'] = df['WORD'].str.strip('"\'')
+            df['WORD'] = df['WORD'].str.strip()  # Strip again after quote removal
+            # Remove empty strings
+            df = df[df['WORD'] != '']
+            # Recalculate counts after cleaning (in case duplicates were created)
+            df = df.groupby('WORD', as_index=False)['cnt'].sum()
+            df = df.sort_values('cnt', ascending=False).reset_index(drop=True)
+
         print(f"✓ Query executed successfully")
         print(f"  - Total records: {len(df):,}")
         print(f"  - Unique words: {df['WORD'].nunique():,}")

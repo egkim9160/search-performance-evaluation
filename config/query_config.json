@@ -1,0 +1,116 @@
+{
+  "description": "검색 쿼리 방법 설정",
+  "query_methods": {
+    "lexical_match": {
+      "name": "lexical_match",
+      "description": "기본 match 쿼리 (Lexical 검색)",
+      "search_type": "lexical",
+      "query_structure": {
+        "type": "match",
+        "operator": "and"
+      }
+    },
+    "lexical_match_or": {
+      "name": "lexical_match_or",
+      "description": "OR 조건 match 쿼리",
+      "search_type": "lexical",
+      "query_structure": {
+        "type": "match",
+        "operator": "or"
+      }
+    },
+    "lexical_multifield": {
+      "name": "lexical_multifield",
+      "description": "Multi-field match 쿼리",
+      "search_type": "lexical",
+      "query_structure": {
+        "type": "multi_match",
+        "operator": "and",
+        "field_boosts": {
+          "content": 3.0,
+          "keywords": 2.0,
+          "board_name": 1.0
+        }
+      }
+    },
+    "lexical_bool": {
+      "name": "lexical_bool",
+      "description": "Bool 쿼리 (must + should 조합)",
+      "search_type": "lexical",
+      "query_structure": {
+        "type": "bool",
+        "must": {
+          "type": "match",
+          "operator": "and"
+        },
+        "should": {
+          "type": "match",
+          "boost": 1.5
+        }
+      }
+    },
+    "semantic_knn": {
+      "name": "semantic_knn",
+      "description": "kNN Semantic 검색 (text-embedding-3-large)",
+      "search_type": "semantic",
+      "query_structure": {
+        "type": "knn",
+        "k": 20
+      },
+      "requires_embedding": true,
+      "embedding_model": "text-embedding-3-large",
+      "embedding_api_url": "https://llm-api.medigate.net/embedding/v1"
+    },
+    "hybrid_lexical_semantic": {
+      "name": "hybrid_lexical_semantic",
+      "description": "Hybrid 검색 (Lexical + Semantic)",
+      "search_type": "hybrid",
+      "query_structure": {
+        "type": "hybrid",
+        "lexical": {
+          "type": "match",
+          "operator": "and",
+          "boost": 1.0
+        },
+        "semantic": {
+          "type": "knn",
+          "k": 20,
+          "boost": 2.0
+        }
+      },
+      "requires_embedding": true,
+      "embedding_model": "BAAI/bge-m3"
+    },
+    "hybrid_multifield_semantic": {
+      "name": "hybrid_multifield_semantic",
+      "description": "Hybrid 검색 (Multi-field + Semantic)",
+      "search_type": "hybrid",
+      "query_structure": {
+        "type": "hybrid",
+        "lexical": {
+          "type": "multi_match",
+          "operator": "and",
+          "field_boosts": {
+            "content": 3.0,
+            "keywords": 2.0,
+            "board_name": 1.0
+          },
+          "boost": 1.0
+        },
+        "semantic": {
+          "type": "knn",
+          "k": 20,
+          "boost": 2.5
+        }
+      },
+      "requires_embedding": true,
+      "embedding_model": "BAAI/bge-m3"
+    }
+  },
+  "search_parameters": {
+    "default_top_k": 20,
+    "max_top_k": 100,
+    "timeout": 30,
+    "enable_explain": false
+  }
+}
