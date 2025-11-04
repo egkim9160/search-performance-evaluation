@@ -101,6 +101,8 @@ class SearchResultPooler:
                         doc_data = {
                             "query": query,
                             "doc_id": doc_id,
+                            # Preserve query set (HEAD/TAIL) for downstream analysis
+                            "query_set": row.get("query_set"),
                             "found_by_methods": [method_name],
                             "num_methods_found": 1,
                         }
@@ -299,6 +301,16 @@ def main():
         help="Paths to search result CSV files (space-separated)"
     )
     parser.add_argument(
+        "--results_head",
+        nargs="+",
+        help="HEAD result CSV paths per method (same order as --methods)"
+    )
+    parser.add_argument(
+        "--results_tail",
+        nargs="+",
+        help="TAIL result CSV paths per method (same order as --methods)"
+    )
+    parser.add_argument(
         "--methods",
         nargs="+",
         required=True,
@@ -317,8 +329,8 @@ def main():
     )
     parser.add_argument(
         "--query_set",
-        default="HEAD",
-        help="Query set name (for output filename)"
+        default="ALL",
+        help="Query set name for output filename (default: ALL)"
     )
     parser.add_argument(
         "--verbose",
@@ -328,10 +340,16 @@ def main():
     )
     args = parser.parse_args()
 
-    # Validate inputs
-    if len(args.results) != len(args.methods):
-        print(f"Error: Number of result files ({len(args.results)}) must match number of methods ({len(args.methods)})")
-        sys.exit(1)
+    # Determine loading mode (legacy single list vs head/tail lists)
+    use_ht = args.results_head is not None and args.results_tail is not None
+    if use_ht:
+        if len(args.results_head) != len(args.methods) or len(args.results_tail) != len(args.methods):
+            print("Error: --results_head and --results_tail must be provided with the same length as --methods")
+            sys.exit(1)
+    else:
+        if len(args.results) != len(args.methods):
+            print(f"Error: Number of result files ({len(args.results)}) must match number of methods ({len(args.methods)})")
+            sys.exit(1)
 
     print("=" * 70)
     print("Step04: Pool Search Results (Depth-K Pooling)")
@@ -340,14 +358,26 @@ def main():
     # Load results
     print(f"\n[1] Loading search results...")
     result_dfs = []
-    for filepath, method_name in zip(args.results, args.methods):
-        try:
-            df = load_search_results(filepath)
-            result_dfs.append(df)
-            print(f"  ✓ {method_name}: {len(df)} records from {filepath}")
-        except Exception as e:
-            print(f"  ✗ Failed to load {method_name} results: {e}")
-            sys.exit(1)
+    if use_ht:
+        for head_fp, tail_fp, method_name in zip(args.results_head, args.results_tail, args.methods):
+            try:
+                df_head = load_search_results(head_fp)
+                df_tail = load_search_results(tail_fp)
+                df_combined = pd.concat([df_head, df_tail], ignore_index=True)
+                result_dfs.append(df_combined)
+                print(f"  ✓ {method_name}: {len(df_combined)} records (HEAD {len(df_head)}, TAIL {len(df_tail)})")
+            except Exception as e:
+                print(f"  ✗ Failed to load {method_name} head/tail results: {e}")
+                sys.exit(1)
+    else:
+        for filepath, method_name in zip(args.results, args.methods):
+            try:
+                df = load_search_results(filepath)
+                result_dfs.append(df)
+                print(f"  ✓ {method_name}: {len(df)} records from {filepath}")
+            except Exception as e:
+                print(f"  ✗ Failed to load {method_name} results: {e}")
+                sys.exit(1)
 
     # Initialize pooler
     pooler = SearchResultPooler(args.output_dir)

@@ -89,6 +89,7 @@ def create_relevance_index(client: OpenSearch, index_name: str) -> bool:
                 # Query and document identification
                 "query": {"type": "keyword"},
                 "doc_id": {"type": "keyword"},
+                "query_set": {"type": "keyword"},
                 "found_by_methods": {"type": "keyword"},
                 "num_methods_found": {"type": "integer"},
                 

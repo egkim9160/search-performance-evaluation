@@ -308,7 +308,19 @@ def main():
         default=True,
         help="Skip already labeled documents (default: True)"
     )
+    parser.add_argument(
+        "--mode",
+        choices=["full", "test", "skip"],
+        default="full",
+        help="Labeling mode: full (all docs), test (50 docs), skip (use existing labeled file)"
+    )
     args = parser.parse_args()
+    
+    # Apply mode settings
+    if args.mode == "test" and not args.limit:
+        args.limit = 50
+    elif args.mode == "skip":
+        args.limit = 0  # Skip labeling entirely
     
     # Set output file
     if not args.output_csv:
@@ -340,12 +352,30 @@ def main():
     
     # Label CSV
     try:
-        stats = labeler.label_csv(
-            input_csv=args.input_csv,
-            output_csv=args.output_csv,
-            limit=args.limit,
-            skip_labeled=args.skip_labeled
-        )
+        # Check if skip mode and labeled file already exists
+        if args.mode == "skip":
+            if not Path(args.output_csv).exists():
+                print(f"\n  ✗ Skip mode requested but labeled file does not exist: {args.output_csv}")
+                print(f"  Please run labeling first or use --mode full/test")
+                sys.exit(1)
+            else:
+                print(f"\n  ℹ Skip mode: Using existing labeled file")
+                print(f"  File: {args.output_csv}")
+                # Create dummy stats
+                df = pd.read_csv(args.output_csv)
+                stats = {
+                    "total": 0,
+                    "labeled": 0,
+                    "failed": 0,
+                    "total_labeled_in_file": (~df['relevance'].isna()).sum() if 'relevance' in df.columns else 0
+                }
+        else:
+            stats = labeler.label_csv(
+                input_csv=args.input_csv,
+                output_csv=args.output_csv,
+                limit=args.limit,
+                skip_labeled=args.skip_labeled
+            )
     except Exception as e:
         print(f"\n  ✗ Labeling failed: {e}")
         import traceback

@@ -1,0 +1,38 @@
+{
+  "env_file": "/SPO/Project/Search_model_evaluation/search-performance-evaluation/.env",
+  "output_dir": "/SPO/Project/Search_model_evaluation/251030_logging_collection/data/search_results",
+  "query_files": {
+    "head": "/SPO/Project/Search_model_evaluation/251030_logging_collection/data/processed/queries_head_300.csv",
+    "tail": "/SPO/Project/Search_model_evaluation/251030_logging_collection/data/processed/queries_longtail_200.csv"
+  },
+  "experiments": [
+    {
+      "id": "exp001",
+      "name": "muzzima_lexical",
+      "description": "MUZZIMA - lexical match",
+      "index_name": "community-with-meta_classify-20250716",
+      "query_method": {
+        "id": "lexical",
+        "search_type": "lexical",
+        "query_structure": { "type": "match", "operator": "and" }
+      }
+    },
+    {
+      "id": "exp002",
+      "name": "muzzima_semantic",
+      "description": "MUZZIMA - semantic match",
+      "index_name": "community-with-meta_classify-20250716",
+      "query_method": {
+        "id": "semantic",
+        "search_type": "semantic",
+        "query_structure": { "type": "knn", "k": 20 },
+        "embedding_model": "text-embedding-3-large",
+        "embedding_api_url": "https://llm-api.medigate.net/embedding/v1"
+      }
+    }
+  ],
+  "execution": {
+    "continue_on_error": true
+  }
+}
+

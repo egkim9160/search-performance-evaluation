@@ -86,7 +86,7 @@ Lexical과 Semantic 검색을 실행합니다.
 }
 ```
 
-### 실행
+### 실행 (기존 3분할 설정 사용)
 
 ```bash
 python process/03.fetch_opensearch_results.py \
@@ -101,35 +101,26 @@ python process/03.fetch_opensearch_results.py \
 
 ---
 
-## Step 04: Depth-K Pooling
+## Step 04: Depth-K Pooling (HEAD+TAIL 통합)
 
-Lexical과 Semantic 결과를 통합합니다.
+Lexical과 Semantic 결과를 합쳐 전체 문서 Pool을 만듭니다. 이후 단계는 이 통합 세트 기준으로 진행됩니다.
 
 ```bash
-# HEAD 쿼리 풀링
 python process/04.pool_search_results.py \
-  --results \
-    data/search_results/exp001_head_20250101_120000.csv \
-    data/search_results/exp002_head_20250101_120000.csv \
+  --results_head \
+    data/search_results/exp001_head_*.csv \
+    data/search_results/exp002_head_*.csv \
+  --results_tail \
+    data/search_results/exp001_tail_*.csv \
+    data/search_results/exp002_tail_*.csv \
   --methods lexical semantic \
   --depth_k 20 \
-  --query_set HEAD \
-  --output_dir data/pooled_results
-
-# TAIL 쿼리 풀링
-python process/04.pool_search_results.py \
-  --results \
-    data/search_results/exp001_tail_20250101_120000.csv \
-    data/search_results/exp002_tail_20250101_120000.csv \
-  --methods lexical semantic \
-  --depth_k 20 \
-  --query_set TAIL \
+  --query_set ALL \
   --output_dir data/pooled_results
 ```
 
 **출력:**
-- `data/pooled_results/pooled_head_lexical_semantic_k20_*.csv`
-- `data/pooled_results/pooled_tail_lexical_semantic_k20_*.csv`
+- `data/pooled_results/pooled_all_lexical_semantic_k20_*.csv`
 
 **통계 예시:**
 ```
@@ -148,20 +139,14 @@ Pooling Statistics:
 
 ---
 
-## Step 05: Pool을 OpenSearch에 업로드
+## Step 05: Pool을 OpenSearch에 업로드 (단일 인덱스)
 
-평가를 위해 pooled 결과를 OpenSearch 인덱스에 저장합니다.
+통합 pooled 결과를 단일 인덱스에 저장합니다.
 
 ```bash
-# HEAD 쿼리 업로드
 python process/05.upload_pool_to_db.py \
-  --pooled_csv data/pooled_results/pooled_head_lexical_semantic_k20_*.csv \
-  --index_name search_relevance_judgments_head_20251101
-
-# TAIL 쿼리 업로드 (기존 인덱스가 있으면 삭제 후 생성)
-python process/05.upload_pool_to_db.py \
-  --pooled_csv data/pooled_results/pooled_tail_lexical_semantic_k20_*.csv \
-  --index_name search_relevance_judgments_tail_20251101 \
+  --pooled_csv data/pooled_results/pooled_all_lexical_semantic_k20_*.csv \
+  --index_name search_relevance_judgments_all_20251101 \
   --delete_existing
 ```
 
@@ -172,6 +157,7 @@ python process/05.upload_pool_to_db.py \
     "properties": {
       "query": {"type": "keyword"},
       "doc_id": {"type": "keyword"},
+      "query_set": {"type": "keyword"},
       "found_by_methods": {"type": "keyword"},
       "num_methods_found": {"type": "integer"},
       
@@ -205,25 +191,14 @@ Labeled: 0/6,000 (0.0%)
 
 ---
 
-## Step 06: AI 기반 Relevance Labeling
+## Step 06: AI 기반 Relevance Labeling (단일 세트)
 
 GPT-4를 사용하여 자동으로 관련도를 평가합니다. (OpenAI 공식 API 사용)
 
 ```bash
-# HEAD 쿼리 labeling (OpenAI 공식 API 사용)
 python process/06.label_relevance.py \
-  --index_name search_relevance_judgments_head_20251101 \
+  --index_name search_relevance_judgments_all_20251101 \
   --model gpt-4o-mini
-
-# TAIL 쿼리 labeling
-python process/06.label_relevance.py \
-  --index_name search_relevance_judgments_tail_20251101 \
-  --model gpt-4o-mini
-
-# 테스트 (10개만)
-python process/06.label_relevance.py \
-  --index_name search_relevance_judgments_head_20251101 \
-  --limit 10
 ```
 
 **Labeling 프로세스:**
@@ -250,27 +225,32 @@ Relevance distribution:
 
 ---
 
-## Step 07: 평가 지표 계산
+## Step 07: 평가 지표 계산 (all/head/tail 제공)
 
 nDCG, Recall, MRR 등을 계산합니다.
 
 ```bash
-# HEAD 쿼리 평가
+# ALL
 python process/07.calculate_metrics.py \
-  --index_name search_relevance_judgments_head_20251101 \
+  --index_name search_relevance_judgments_all_20251101 \
   --methods lexical semantic \
   --k_values 5 10 20 \
-  --output_dir data/evaluation_results/head
+  --subset all \
+  --output_dir data/evaluation_results
 
-# TAIL 쿼리 평가
+# HEAD only
 python process/07.calculate_metrics.py \
-  --index_name search_relevance_judgments_tail_20251101 \
-  --output_dir data/evaluation_results/tail
+  --index_name search_relevance_judgments_all_20251101 \
+  --methods lexical semantic \
+  --subset head \
+  --output_dir data/evaluation_results
 
-# 자동 감지 (모든 방법)
+# TAIL only
 python process/07.calculate_metrics.py \
-  --index_name search_relevance_judgments_head_20251101 \
-  --output_dir data/evaluation_results/head
+  --index_name search_relevance_judgments_all_20251101 \
+  --methods lexical semantic \
+  --subset tail \
+  --output_dir data/evaluation_results
 ```
 
 **계산되는 지표:**

@@ -44,7 +44,27 @@ Pool (합집합):   [doc1, doc2, doc3, doc5, ..., doc41]
 
 ## 사용 방법
 
-### 2가지 방법 (Lexical + Semantic)
+### (권장) HEAD+TAIL 통합 Pooling → 이후 전 단계 단일 세트로 진행
+
+```bash
+python process/04.pool_search_results.py \
+  --results_head \
+    data/search_results/exp001_head_*.csv \
+    data/search_results/exp002_head_*.csv \
+  --results_tail \
+    data/search_results/exp001_tail_*.csv \
+    data/search_results/exp002_tail_*.csv \
+  --methods lexical semantic \
+  --depth_k 20 \
+  --query_set ALL \
+  --output_dir data/pooled_results
+```
+
+출력 예시: `pooled_all_lexical_semantic_k20_YYYYMMDD_HHMMSS.csv`
+
+이 파일을 기준으로 AI 라벨링, 업로드, 평가를 모두 단일 세트로 진행합니다. 평가 단계에서 `--subset`으로 all/head/tail을 분리합니다.
+
+### (구버전) 세트별 개별 Pooling
 
 ```bash
 python process/04.pool_search_results.py \
@@ -89,8 +109,7 @@ python process/04.pool_search_results.py \
 
 ### 파일명
 ```
-pooled_head_lexical_semantic_k20_20250101_120000.csv
-pooled_tail_lexical_semantic_hybrid_k20_20250101_120000.csv
+pooled_all_lexical_semantic_k20_20250101_120000.csv
 ```
 
 ### CSV 컬럼 구조
@@ -218,23 +237,17 @@ python process/02.prepare_queries_and_fetch_os_results.py \
 python process/03.fetch_opensearch_results.py \
   --run_only exp001 exp002
 
-# 4. HEAD 쿼리 결과 통합 (Depth-20 Pooling)
+# 4. HEAD+TAIL 통합 Pooling (Depth-20)
 python process/04.pool_search_results.py \
-  --results \
-    data/search_results/exp001_head_20250101_120000.csv \
-    data/search_results/exp002_head_20250101_120000.csv \
+  --results_head \
+    data/search_results/exp001_head_*.csv \
+    data/search_results/exp002_head_*.csv \
+  --results_tail \
+    data/search_results/exp001_tail_*.csv \
+    data/search_results/exp002_tail_*.csv \
   --methods lexical semantic \
   --depth_k 20 \
-  --query_set HEAD
-
-# 5. TAIL 쿼리 결과 통합
-python process/04.pool_search_results.py \
-  --results \
-    data/search_results/exp001_tail_20250101_120000.csv \
-    data/search_results/exp002_tail_20250101_120000.csv \
-  --methods lexical semantic \
-  --depth_k 20 \
-  --query_set TAIL
+  --query_set ALL
 ```
 
 ---

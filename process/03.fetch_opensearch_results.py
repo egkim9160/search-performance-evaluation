@@ -35,10 +35,7 @@ try:
 except Exception:
     PROJECT_ROOT = Path.cwd()
 
-# Default config paths (relative to project root)
-DEFAULT_EXPERIMENTS_CONFIG = PROJECT_ROOT / "config" / "search_experiments.json"
-DEFAULT_INDEX_CONFIG = PROJECT_ROOT / "config" / "index_config.json"
-DEFAULT_QUERY_CONFIG = PROJECT_ROOT / "config" / "query_config.json"
+# (deprecated) legacy multi-file configs removed
 
 
 class EmbeddingGenerator:
@@ -498,6 +495,9 @@ def load_json_config(config_path: str) -> Dict[str, Any]:
     return config
 
 
+# legacy builder removed
+
+
 def load_queries(csv_path: str) -> pd.DataFrame:
     """Load query CSV file"""
     df = pd.read_csv(csv_path)
@@ -511,19 +511,9 @@ def main():
         description="Step03: Fetch OpenSearch results based on JSON configuration"
     )
     parser.add_argument(
-        "--experiments",
-        default=str(DEFAULT_EXPERIMENTS_CONFIG),
-        help=f"Path to search experiments JSON file (default: {DEFAULT_EXPERIMENTS_CONFIG})"
-    )
-    parser.add_argument(
-        "--index_config",
-        default=str(DEFAULT_INDEX_CONFIG),
-        help=f"Path to index configuration JSON file (default: {DEFAULT_INDEX_CONFIG})"
-    )
-    parser.add_argument(
-        "--query_config",
-        default=str(DEFAULT_QUERY_CONFIG),
-        help=f"Path to query method configuration JSON file (default: {DEFAULT_QUERY_CONFIG})"
+        "--single_config",
+        required=True,
+        help="Path to JSON config with env_file, query_files, output_dir, experiments[]"
     )
     parser.add_argument(
         "--run_only",
@@ -555,15 +545,11 @@ def main():
     print("Step03: Fetch OpenSearch Search Results")
     print("=" * 70)
 
-    # Load configurations
-    print(f"\n[1] Loading configurations...")
+    # Load configurations (single file only)
+    print(f"\n[1] Loading configuration...")
     try:
-        experiments_config = load_json_config(args.experiments)
-        index_configs = load_json_config(args.index_config)
-        query_methods = load_json_config(args.query_config)
-        print(f"  ✓ Experiments config loaded: {args.experiments}")
-        print(f"  ✓ Index config loaded: {args.index_config}")
-        print(f"  ✓ Query config loaded: {args.query_config}")
+        cfg = load_json_config(args.single_config)
+        print(f"  ✓ Single config loaded: {args.single_config}")
     except Exception as e:
         print(f"  ✗ Failed to load configuration: {e}")
         sys.exit(1)
@@ -571,7 +557,7 @@ def main():
     # Initialize OpenSearch client
     print(f"\n[2] Connecting to OpenSearch...")
     try:
-        env_file = experiments_config.get("env_file")
+        env_file = cfg.get("env_file")
         if not env_file or not os.path.exists(env_file):
             raise RuntimeError(f".env file not found: {env_file}")
         client = OpenSearchClient(env_file)
@@ -581,7 +567,7 @@ def main():
 
     # Load queries
     print(f"\n[3] Loading query files...")
-    query_files = experiments_config.get("query_files", {})
+    query_files = cfg.get("query_files", {})
     queries = {}
 
     for query_set in args.query_sets:
@@ -598,20 +584,16 @@ def main():
             sys.exit(1)
 
     # Initialize result collector
-    output_dir = experiments_config.get("output_dir", "data/search_results")
+    output_dir = cfg.get("output_dir", "data/search_results")
     collector = SearchResultCollector(output_dir)
     print(f"\n[4] Output directory: {output_dir}")
 
     # Filter experiments to run
-    all_experiments = experiments_config.get("experiments", [])
+    all_experiments = cfg.get("experiments", [])
 
     # Apply filters
     experiments_to_run = []
     for exp in all_experiments:
-        # Skip if not enabled
-        if not exp.get("enabled", True):
-            continue
-
         # Skip if run_only specified and this exp not in list
         if args.run_only and exp["id"] not in args.run_only:
             continue
@@ -633,30 +615,35 @@ def main():
     for exp_idx, experiment in enumerate(experiments_to_run, start=1):
         exp_id = experiment["id"]
         exp_name = experiment["name"]
-        index_id = experiment["index_id"]
-        query_method_id = experiment["query_method_id"]
+        index_name = experiment["index_name"]
+        query_method = experiment["query_method"]
 
         print(f"\n[{exp_idx}/{total_experiments}] Experiment: {exp_id}")
         print(f"  Name: {exp_name}")
         print(f"  Description: {experiment.get('description', 'N/A')}")
-        print(f"  Index: {index_id}")
-        print(f"  Query Method: {query_method_id}")
+        print(f"  Index: {index_name}")
+        print(f"  Query Method: {query_method.get('id', 'N/A')} ({query_method.get('search_type', 'N/A')})")
 
-        # Get index and query method configs
-        try:
-            index_config = index_configs["indexes"][index_id]
-            query_method = query_methods["query_methods"][query_method_id]
-        except KeyError as e:
-            print(f"  ✗ Configuration not found: {e}")
-            skipped_experiments.append(exp_id)
-            continue
-
+        # Minimal index config defaults
+        index_config = {
+            "name": index_name,
+            "fields": {
+                "content": "merged_comment",
+                "board_name": "BOARD_NAME",
+                "keywords": "keywords"
+            },
+            "source_fields": [
+                "BOARD_IDX", "TITLE", "BOARD_NAME", "CONTENT", "merged_comment",
+                "view_cnt", "comment_cnt", "agree_cnt", "disagree_cnt", "REG_DATE", "U_ID", "keywords"
+            ],
+            "embedding_field": "vector_field"
+        }
         print(f"  → Index Name: {index_config['name']}")
-        print(f"  → Search Type: {query_method['search_type']}")
+        print(f"  → Search Type: {query_method.get('search_type', 'N/A')}")
 
         # Initialize embedding generator if required
         embedding_gen = None
-        if query_method.get("requires_embedding", False):
+        if query_method.get("search_type") == "semantic" or query_method.get("query_structure", {}).get("type") == "knn":
             try:
                 embedding_model = query_method.get("embedding_model")
                 embedding_api_url = query_method.get("embedding_api_url")
@@ -704,7 +691,7 @@ def main():
         except Exception as e:
             print(f"  ✗ Error: {e}")
             skipped_experiments.append(exp_id)
-            if not experiments_config.get("execution", {}).get("continue_on_error", True):
+            if not cfg.get("execution", {}).get("continue_on_error", True):
                 sys.exit(1)
             continue
 

@@ -212,7 +212,8 @@ class MetricsCalculator:
         self,
         client: OpenSearch,
         index_names: List[str],
-        method: str
+        method: str,
+        subset: str = "all"
     ) -> Dict[str, List[Tuple[str, int]]]:
         """
         Load search results for a method from OpenSearch (supports multiple indices)
@@ -247,6 +248,12 @@ class MetricsCalculator:
                 ],
                 "size": 10000  # Adjust based on your data size
             }
+
+            # Apply subset filter if requested
+            if subset in ("head", "tail"):
+                query_body["query"]["bool"].setdefault("filter", []).append({
+                    "term": {"query_set": subset.upper()}
+                })
             
             response = client.search(index=index_name, body=query_body)
             hits = response['hits']['hits']
@@ -265,6 +272,7 @@ class MetricsCalculator:
         client: OpenSearch,
         index_names: List[str],
         method: str,
+        subset: str = "all",
         verbose: bool = True
     ) -> Tuple[pd.DataFrame, Dict]:
         """
@@ -272,6 +280,7 @@ class MetricsCalculator:
         
         Args:
             index_names: List of index names or single index name
+            subset: Query subset to evaluate (all/head/tail)
         
         Returns:
             (per_query_metrics_df, aggregated_metrics_dict)
@@ -280,7 +289,7 @@ class MetricsCalculator:
             print(f"\n  Calculating metrics for: {method}")
         
         # Load results
-        query_results = self.load_results_from_opensearch(client, index_names, method)
+        query_results = self.load_results_from_opensearch(client, index_names, method, subset=subset)
         
         if not query_results:
             print(f"    ⚠ No results found for {method}")
@@ -408,6 +417,12 @@ def main():
         help="Output directory for results"
     )
     parser.add_argument(
+        "--subset",
+        choices=["all", "head", "tail"],
+        default="all",
+        help="Evaluate on subset (all/head/tail). Requires 'query_set' field in index."
+    )
+    parser.add_argument(
         "--env_file",
         help="Path to .env file (default: project_root/.env)"
     )
@@ -472,7 +487,7 @@ def main():
     for method in methods:
         try:
             per_query_df, agg = calculator.calculate_for_method(
-                client, index_names, method, args.verbose
+                client, index_names, method, subset=args.subset, verbose=args.verbose
             )
             
             if not per_query_df.empty:
@@ -491,15 +506,18 @@ def main():
     
     # Save per-query metrics
     print(f"\n[4] Saving results...")
+    # Create subset subdirectory
+    subset_out_dir = os.path.join(args.output_dir, args.subset)
+    os.makedirs(subset_out_dir, exist_ok=True)
     for method, df in per_query_dfs.items():
-        output_file = os.path.join(args.output_dir, f"per_query_metrics_{method}.csv")
+        output_file = os.path.join(subset_out_dir, f"per_query_metrics_{method}.csv")
         df.to_csv(output_file, index=False, encoding='utf-8-sig')
         print(f"  ✓ Saved {method} per-query metrics: {output_file}")
     
     # Create aggregated metrics DataFrame
     agg_df = pd.DataFrame(agg_metrics).T
     agg_df.index.name = 'method'
-    agg_file = os.path.join(args.output_dir, "aggregated_metrics.csv")
+    agg_file = os.path.join(subset_out_dir, "aggregated_metrics.csv")
     agg_df.to_csv(agg_file, encoding='utf-8-sig')
     print(f"  ✓ Saved aggregated metrics: {agg_file}")
     
