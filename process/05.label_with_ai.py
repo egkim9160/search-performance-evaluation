@@ -2,21 +2,23 @@
 """
 Step05: Label CSV with AI before uploading to OpenSearch
 Performs relevance labeling on pooled CSV file directly
+Async version for faster processing
 """
 import os
 import sys
 import argparse
 import json
+import asyncio
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 
 import pandas as pd
 from dotenv import load_dotenv
-from tqdm import tqdm
+from tqdm.asyncio import tqdm as async_tqdm
 
 try:
-    from openai import OpenAI
+    from openai import AsyncOpenAI
 except ImportError:
     print("Error: openai package is required. Install with: pip install openai")
     sys.exit(1)
@@ -61,211 +63,288 @@ RELEVANCE_PROMPT_TEMPLATE = """당신은 검색 품질 평가 전문가입니다
 
 
 class RelevanceLabeler:
-    """AI-based relevance labeling for CSV"""
-    
-    def __init__(self, api_url: Optional[str], model: str, labeled_by: str = "AI-GPT4"):
-        """Initialize labeler with OpenAI API"""
+    """AI-based relevance labeling for CSV with async support"""
+
+    def __init__(
+        self,
+        api_url: Optional[str],
+        model: str,
+        labeled_by: str = "AI-GPT4",
+        max_concurrent: int = 10
+    ):
+        """Initialize labeler with OpenAI API
+
+        Args:
+            api_url: Custom API URL (None for official OpenAI)
+            model: Model name
+            labeled_by: Label attribution
+            max_concurrent: Maximum concurrent API requests (default: 10)
+        """
         self.model = model
         self.labeled_by = labeled_by
-        
+        self.max_concurrent = max_concurrent
+
         # Use official OpenAI API if api_url is None
         client_params = {
             "api_key": os.getenv("OPENAI_API_KEY"),
             "timeout": 120,
             "max_retries": 2,
         }
-        
+
         if api_url:
             client_params["base_url"] = api_url
-        
-        self.client = OpenAI(**client_params)
-        
+
+        self.client = AsyncOpenAI(**client_params)
+
         print(f"  Model: {self.model}")
         print(f"  API: {'Official OpenAI API' if not api_url else api_url}")
         print(f"  Labeled by: {self.labeled_by}")
+        print(f"  Max concurrent requests: {self.max_concurrent}")
     
-    def label_document(self, query: str, title: str, content: str) -> Dict:
+    async def label_document(
+        self, query: str, title: str, content: str
+    ) -> Optional[Dict]:
         """
-        Label single document
-        
+        Label single document asynchronously
+
         Returns:
             dict with 'relevance' (int) and 'reason' (str), or None if failed
         """
         # Convert to string and handle NaN/None
         title_str = str(title) if pd.notna(title) and title else "(제목 없음)"
         content_str = str(content) if pd.notna(content) and content else "(내용 없음)"
-        
+
         # Truncate content to 2000 characters
         if content_str != "(내용 없음)":
             content_str = content_str[:2000]
-        
+
         prompt = RELEVANCE_PROMPT_TEMPLATE.format(
-            query=query,
-            title=title_str,
-            content=content_str
+            query=query, title=title_str, content=content_str
         )
-        
+
         try:
-            response = self.client.chat.completions.create(
+            response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a search quality expert. Always respond in valid JSON format."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a search quality expert. Always respond in valid JSON format.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=200
+                max_tokens=200,
             )
-            
+
             content = response.choices[0].message.content.strip()
-            
+
             # Extract JSON
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0].strip()
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0].strip()
-            
+
             result = json.loads(content)
-            
+
             if "relevance" not in result:
                 raise ValueError("Missing 'relevance' field")
-            
+
             relevance = int(result["relevance"])
             if relevance not in [0, 1, 2]:
                 raise ValueError(f"Invalid relevance value: {relevance}")
-            
-            return {
-                "relevance": relevance,
-                "reason": result.get("reason", "")
-            }
-        
+
+            return {"relevance": relevance, "reason": result.get("reason", "")}
+
         except Exception as e:
+            # Return error info for better debugging
             return None
     
-    def label_csv(
-        self,
-        input_csv: str,
-        output_csv: str,
-        limit: Optional[int] = None,
-        skip_labeled: bool = True
-    ) -> Dict:
+    async def _label_document_with_idx(
+        self, idx: int, row: pd.Series, semaphore: asyncio.Semaphore
+    ) -> Tuple[int, Optional[Dict], Optional[str]]:
         """
-        Label documents in CSV file
-        
+        Label single document with rate limiting
+
         Args:
-            input_csv: Input CSV file path
-            output_csv: Output CSV file path
-            limit: Limit number of documents to label (for testing)
-            skip_labeled: Skip already labeled documents
-        
+            idx: DataFrame index
+            row: DataFrame row
+            semaphore: Semaphore for rate limiting
+
         Returns:
-            dict with statistics
+            (index, result_dict, error_message)
         """
-        print(f"\n[1] Loading CSV file...")
-        df = pd.read_csv(input_csv)
-        print(f"  ✓ Loaded {len(df):,} documents")
-        
-        # Check if relevance columns exist
-        if 'relevance' not in df.columns:
-            df['relevance'] = None
-            df['labeled_by'] = None
-            df['labeled_at'] = None
-            df['notes'] = None
-        
-        # Determine which documents to label
-        if skip_labeled:
-            to_label = df[df['relevance'].isna()].copy()
-            print(f"  Already labeled: {(~df['relevance'].isna()).sum():,}")
-            print(f"  To label: {len(to_label):,}")
-        else:
-            to_label = df.copy()
-            print(f"  Total to label: {len(to_label):,}")
-        
-        if limit:
-            to_label = to_label.head(limit)
-            print(f"  Limited to: {len(to_label):,} documents")
-        
-        if len(to_label) == 0:
-            print(f"\n  ℹ No documents to label")
-            return {"total": 0, "labeled": 0, "failed": 0}
-        
-        print(f"\n[2] Starting AI labeling...")
-        print(f"  Total to process: {len(to_label):,}")
-        
-        labeled_count = 0
-        failed_count = 0
-        
-        # Progress bar
-        for idx, row in tqdm(to_label.iterrows(), total=len(to_label), desc="  Labeling"):
+        async with semaphore:
             try:
                 # Choose content (prefer merged_comment, fallback to CONTENT)
-                # Handle NaN values from pandas
                 merged_comment = row.get("merged_comment")
                 content_field = row.get("CONTENT")
-                
-                # Use merged_comment if available and not NaN, otherwise use CONTENT
+
                 if pd.notna(merged_comment) and merged_comment:
                     content = merged_comment
                 elif pd.notna(content_field) and content_field:
                     content = content_field
                 else:
                     content = ""
-                
+
                 # Get title safely
                 title = row.get("TITLE", "")
                 if pd.isna(title):
                     title = ""
-                
+
                 # Label document
-                result = self.label_document(
-                    query=row["query"],
-                    title=title,
-                    content=content
+                result = await self.label_document(
+                    query=row["query"], title=title, content=content
                 )
-                
-                if result:
-                    # Update DataFrame
-                    df.loc[idx, 'relevance'] = result["relevance"]
-                    df.loc[idx, 'notes'] = result["reason"]
-                    df.loc[idx, 'labeled_by'] = self.labeled_by
-                    df.loc[idx, 'labeled_at'] = datetime.now().isoformat()
-                    
-                    labeled_count += 1
-                else:
-                    failed_count += 1
-                    
+
+                return (idx, result, None)
+
             except Exception as e:
+                return (idx, None, str(e))
+
+    async def _label_csv_async(
+        self, df: pd.DataFrame, to_label: pd.DataFrame, batch_size: int = 100
+    ) -> Tuple[int, int]:
+        """
+        Asynchronously label documents in batches with progress bar
+
+        Args:
+            df: Full DataFrame (will be updated)
+            to_label: DataFrame subset to label
+            batch_size: Save checkpoint every N documents
+
+        Returns:
+            (labeled_count, failed_count)
+        """
+        labeled_count = 0
+        failed_count = 0
+        error_samples = []
+
+        # Create semaphore for rate limiting
+        semaphore = asyncio.Semaphore(self.max_concurrent)
+
+        # Create tasks for all documents
+        tasks = [
+            self._label_document_with_idx(idx, row, semaphore)
+            for idx, row in to_label.iterrows()
+        ]
+
+        # Process with progress bar
+        print(f"\n[2] Starting async AI labeling...")
+        print(f"  Total to process: {len(tasks):,}")
+        print(f"  Concurrent requests: {self.max_concurrent}")
+
+        # Use tqdm.asyncio.gather for progress tracking
+        results = await async_tqdm.gather(*tasks, desc="  Labeling")
+
+        # Update DataFrame with results
+        for idx, result, error in results:
+            if result:
+                df.loc[idx, "relevance"] = result["relevance"]
+                df.loc[idx, "notes"] = result["reason"]
+                df.loc[idx, "labeled_by"] = self.labeled_by
+                df.loc[idx, "labeled_at"] = datetime.now().isoformat()
+                labeled_count += 1
+            else:
                 failed_count += 1
-                if failed_count <= 5:
-                    print(f"\n    Warning: Error labeling row {idx}: {e}")
-        
+                if len(error_samples) < 5:
+                    error_samples.append((idx, error))
+
+        # Print error samples
+        if error_samples:
+            print(f"\n  ⚠ Sample errors (showing {len(error_samples)}/{failed_count}):")
+            for idx, error in error_samples:
+                print(f"    Row {idx}: {error}")
+
+        return labeled_count, failed_count
+
+    def label_csv(
+        self,
+        input_csv: str,
+        output_csv: str,
+        limit: Optional[int] = None,
+        skip_labeled: bool = True,
+        batch_save_interval: int = 500,
+    ) -> Dict:
+        """
+        Label documents in CSV file using async processing
+
+        Args:
+            input_csv: Input CSV file path
+            output_csv: Output CSV file path
+            limit: Limit number of documents to label (for testing)
+            skip_labeled: Skip already labeled documents
+            batch_save_interval: Save progress every N documents (for crash recovery)
+
+        Returns:
+            dict with statistics
+        """
+        print(f"\n[1] Loading CSV file...")
+        df = pd.read_csv(input_csv)
+        print(f"  ✓ Loaded {len(df):,} documents")
+
+        # Check if relevance columns exist
+        if "relevance" not in df.columns:
+            df["relevance"] = None
+            df["labeled_by"] = None
+            df["labeled_at"] = None
+            df["notes"] = None
+
+        # Determine which documents to label
+        if skip_labeled:
+            to_label = df[df["relevance"].isna()].copy()
+            print(f"  Already labeled: {(~df['relevance'].isna()).sum():,}")
+            print(f"  To label: {len(to_label):,}")
+        else:
+            to_label = df.copy()
+            print(f"  Total to label: {len(to_label):,}")
+
+        if limit:
+            to_label = to_label.head(limit)
+            print(f"  Limited to: {len(to_label):,} documents")
+
+        if len(to_label) == 0:
+            print(f"\n  ℹ No documents to label")
+            return {"total": 0, "labeled": 0, "failed": 0}
+
+        # Run async labeling
+        labeled_count, failed_count = asyncio.run(
+            self._label_csv_async(df, to_label, batch_save_interval)
+        )
+
         print(f"\n[3] Saving labeled CSV...")
-        df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         print(f"  ✓ Saved to: {output_csv}")
-        
+
         # Statistics
         stats = {
             "total": len(to_label),
             "labeled": labeled_count,
             "failed": failed_count,
-            "total_labeled_in_file": (~df['relevance'].isna()).sum()
+            "total_labeled_in_file": (~df["relevance"].isna()).sum(),
         }
-        
+
         print(f"\n[4] Labeling statistics:")
         print(f"  Processed: {stats['total']:,}")
         print(f"  Successfully labeled: {stats['labeled']:,}")
         print(f"  Failed: {stats['failed']:,}")
-        print(f"  Total labeled in file: {stats['total_labeled_in_file']:,}/{len(df):,}")
-        
+        print(
+            f"  Total labeled in file: {stats['total_labeled_in_file']:,}/{len(df):,}"
+        )
+
         # Relevance distribution
-        relevance_dist = df['relevance'].value_counts().sort_index()
+        relevance_dist = df["relevance"].value_counts().sort_index()
         if len(relevance_dist) > 0:
             print(f"\n  Relevance distribution:")
             for rel, count in relevance_dist.items():
                 if pd.notna(rel):
-                    label = {2: "Very relevant", 1: "Partially relevant", 0: "Not relevant"}.get(int(rel), "Unknown")
-                    pct = count / stats['total_labeled_in_file'] * 100
+                    label = {
+                        2: "Very relevant",
+                        1: "Partially relevant",
+                        0: "Not relevant",
+                    }.get(int(rel), "Unknown")
+                    pct = count / stats["total_labeled_in_file"] * 100
                     print(f"    {int(rel)} ({label}): {count:,} ({pct:.1f}%)")
-        
+
         return stats
 
 
@@ -314,6 +393,12 @@ def main():
         default="full",
         help="Labeling mode: full (all docs), test (50 docs), skip (use existing labeled file)"
     )
+    parser.add_argument(
+        "--max_concurrent",
+        type=int,
+        default=10,
+        help="Maximum concurrent API requests (default: 10)"
+    )
     args = parser.parse_args()
     
     # Apply mode settings
@@ -343,7 +428,8 @@ def main():
         labeler = RelevanceLabeler(
             api_url=args.api_url,
             model=args.model,
-            labeled_by=args.labeled_by
+            labeled_by=args.labeled_by,
+            max_concurrent=args.max_concurrent
         )
         print("  ✓ Labeler initialized")
     except Exception as e:

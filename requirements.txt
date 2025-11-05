@@ -10,3 +10,9 @@ matplotlib>=3.5.0
 
 # Configuration
 python-dotenv>=0.19.0
+
+# AI/ML (for async support, requires openai>=1.0.0)
+openai>=1.0.0
+
+# Search
+opensearch-py>=2.0.0
