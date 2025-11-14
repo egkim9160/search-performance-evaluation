@@ -1,0 +1,125 @@
+{
+  "test_scenarios": {
+    "scenario_A": {
+      "description": "점진적 추가 방식 - 영향도가 낮은 것부터 순차적으로 추가",
+      "groups": [
+        {
+          "id": "baseline",
+          "name": "Baseline (No Filter)",
+          "stoptags": [],
+          "description": "stoptags 없음 - 기준선"
+        },
+        {
+          "id": "light",
+          "name": "Light Filter (Punctuation Only)",
+          "stoptags": ["SP", "SSC", "SSO", "SC", "SE"],
+          "description": "구두점/기호만 제거 - 가장 안전한 필터링"
+        },
+        {
+          "id": "medium",
+          "name": "Medium Filter (+ Particles)",
+          "stoptags": ["SP", "SSC", "SSO", "SC", "SE", "E", "IC", "J", "VSV"],
+          "description": "구두점 + 조사/어미 제거 - 일반적인 필터링"
+        },
+        {
+          "id": "heavy",
+          "name": "Heavy Filter (+ Modifiers)",
+          "stoptags": ["SP", "SSC", "SSO", "SC", "SE", "E", "IC", "J", "VSV", "MAG", "MAJ", "MM"],
+          "description": "구두점 + 조사/어미 + 부사/관형사 제거 - 강한 필터링"
+        },
+        {
+          "id": "full",
+          "name": "Full Filter (All Tags)",
+          "stoptags": ["E", "IC", "J", "MAG", "MAJ", "MM", "SP", "SSC", "SSO", "SC", "SE", "XPN", "XSA", "XSN", "XSV", "UNA", "NA", "VSV"],
+          "description": "모든 stoptags 적용 - 최대 필터링"
+        }
+      ]
+    },
+    "scenario_B": {
+      "description": "기능별 그룹 비교 - 각 품사 그룹의 개별 영향도 측정",
+      "groups": [
+        {
+          "id": "baseline",
+          "name": "Baseline (No Filter)",
+          "stoptags": [],
+          "description": "stoptags 없음 - 기준선"
+        },
+        {
+          "id": "punctuation",
+          "name": "Punctuation Only",
+          "stoptags": ["SP", "SSC", "SSO", "SC", "SE"],
+          "description": "구두점/기호만"
+        },
+        {
+          "id": "grammatical",
+          "name": "Grammatical Only",
+          "stoptags": ["E", "IC", "J", "VSV"],
+          "description": "조사/어미만"
+        },
+        {
+          "id": "modifiers",
+          "name": "Modifiers Only",
+          "stoptags": ["MAG", "MAJ", "MM"],
+          "description": "부사/관형사만"
+        },
+        {
+          "id": "combined",
+          "name": "Combined (Punct + Grammatical)",
+          "stoptags": ["SP", "SSC", "SSO", "SC", "SE", "E", "IC", "J", "VSV"],
+          "description": "구두점 + 조사/어미 조합"
+        }
+      ]
+    },
+    "scenario_C": {
+      "description": "실용적 3단계 비교 - 가장 간단한 테스트",
+      "groups": [
+        {
+          "id": "no_filter",
+          "name": "No Filter",
+          "stoptags": [],
+          "description": "필터링 없음"
+        },
+        {
+          "id": "recommended",
+          "name": "Recommended Filter",
+          "stoptags": ["SP", "SSC", "SSO", "SC", "SE", "E", "IC", "J", "VSV"],
+          "description": "권장 설정: 구두점 + 조사/어미"
+        },
+        {
+          "id": "aggressive",
+          "name": "Aggressive Filter",
+          "stoptags": ["E", "IC", "J", "MAG", "MAJ", "MM", "SP", "SSC", "SSO", "SC", "SE", "XPN", "XSA", "XSN", "XSV", "UNA", "NA", "VSV"],
+          "description": "공격적 필터링: 모든 태그"
+        }
+      ]
+    }
+  },
+  "recommendations": {
+    "quick_test": "scenario_C를 사용하여 3가지만 비교",
+    "detailed_test": "scenario_A를 사용하여 5단계 점진적 분석",
+    "research_test": "scenario_B를 사용하여 각 품사 그룹의 영향도 분석",
+    "typical_production": "medium 또는 recommended 설정 (구두점 + 조사/어미)"
+  },
+  "expected_impact": {
+    "punctuation": {
+      "performance": "minimal",
+      "precision": "no change or slight improvement",
+      "recall": "no significant change"
+    },
+    "grammatical": {
+      "performance": "moderate",
+      "precision": "may improve (less noise)",
+      "recall": "may decrease slightly"
+    },
+    "modifiers": {
+      "performance": "significant",
+      "precision": "may decrease (losing context)",
+      "recall": "may decrease (missing modifier-based matches)"
+    },
+    "full": {
+      "performance": "highest",
+      "precision": "uncertain (may lose important context)",
+      "recall": "likely to decrease significantly"
+    }
+  }
+}
